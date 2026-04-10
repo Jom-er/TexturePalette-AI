@@ -222,127 +222,131 @@
     </footer>
 
     <script>
-        const apiKey = "AIzaSyA7gPOdg3k9lNs-PcinCesH9IuctG4Muck";
+        import { GoogleGenAI } from "@google/genai";
+
+        const ai = new GoogleGenAI({
+            apiKey: "AIzaSyA7gPOdg3k9lNs-PcinCesH9IuctG4Muck"});
+
         let currentAnalysis = null;
 
-        const fileInput = document.getElementById('fileInput');
-        const dropZone = document.getElementById('dropZone');
-        const previewImg = document.getElementById('previewImg');
-        const previewContainer = document.getElementById('previewContainer');
-        const uploadPrompt = document.getElementById('uploadPrompt');
-        const dragOverlay = document.getElementById('dragOverlay');
-        const emptyState = document.getElementById('emptyState');
-        const loadingState = document.getElementById('loadingState');
-        const resultContent = document.getElementById('resultContent');
-        const errorBox = document.getElementById('errorBox');
+            const fileInput = document.getElementById('fileInput');
+            const dropZone = document.getElementById('dropZone');
+            const previewImg = document.getElementById('previewImg');
+            const previewContainer = document.getElementById('previewContainer');
+            const uploadPrompt = document.getElementById('uploadPrompt');
+            const dragOverlay = document.getElementById('dragOverlay');
+            const emptyState = document.getElementById('emptyState');
+            const loadingState = document.getElementById('loadingState');
+            const resultContent = document.getElementById('resultContent');
+            const errorBox = document.getElementById('errorBox');
 
-        const materialName = document.getElementById('materialName');
-        const sourceHex = document.getElementById('sourceHex');
-        const finalHex = document.getElementById('finalHex');
-        const colorPreview = document.getElementById('colorPreview');
-        const reasoningText = document.getElementById('reasoningText');
-        const copyCard = document.getElementById('copyCard');
-        const copiedOverlay = document.getElementById('copiedOverlay');
+            const materialName = document.getElementById('materialName');
+            const sourceHex = document.getElementById('sourceHex');
+            const finalHex = document.getElementById('finalHex');
+            const colorPreview = document.getElementById('colorPreview');
+            const reasoningText = document.getElementById('reasoningText');
+            const copyCard = document.getElementById('copyCard');
+            const copiedOverlay = document.getElementById('copiedOverlay');
 
-        const showUI = (state) => {
-            [emptyState, loadingState, resultContent].forEach(el => el.classList.add('hidden'));
-            if (state === 'loading') loadingState.classList.remove('hidden');
-            else if (state === 'result') resultContent.classList.remove('hidden');
-            else emptyState.classList.remove('hidden');
-        };
+            const showUI = (state) => {
+                [emptyState, loadingState, resultContent].forEach(el => el.classList.add('hidden'));
+                if (state === 'loading') loadingState.classList.remove('hidden');
+                else if (state === 'result') resultContent.classList.remove('hidden');
+                else emptyState.classList.remove('hidden');
+            };
 
-        const handleFile = (file) => {
-            if (file && file.type.startsWith('image/')) {
-                const url = URL.createObjectURL(file);
-                previewImg.src = url;
-                uploadPrompt.classList.add('hidden');
-                previewContainer.classList.remove('hidden');
+            const handleFile = (file) => {
+                if (file && file.type.startsWith('image/')) {
+                    const url = URL.createObjectURL(file);
+                    previewImg.src = url;
+                    uploadPrompt.classList.add('hidden');
+                    previewContainer.classList.remove('hidden');
+                    errorBox.classList.add('hidden');
+                    previewImg.onload = () => runAnalysis();
+                }
+            };
+
+            // Exponential Backoff Implementation
+            const fetchWithRetry = async (url, options, retries = 5, backoff = 1000) => {
+                try {
+                    const response = await fetch(url, options);
+                    if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+                    return await response.json();
+                } catch (err) {
+                    if (retries <= 0) throw err;
+                    await new Promise(resolve => setTimeout(resolve, backoff));
+                    return fetchWithRetry(url, options, retries - 1, backoff * 2);
+                }
+            };
+
+            const runAnalysis = async () => {
+                showUI('loading');
                 errorBox.classList.add('hidden');
-                previewImg.onload = () => runAnalysis();
-            }
-        };
 
-        // Exponential Backoff Implementation
-        const fetchWithRetry = async (url, options, retries = 5, backoff = 1000) => {
-            try {
-                const response = await fetch(url, options);
-                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-                return await response.json();
-            } catch (err) {
-                if (retries <= 0) throw err;
-                await new Promise(resolve => setTimeout(resolve, backoff));
-                return fetchWithRetry(url, options, retries - 1, backoff * 2);
-            }
-        };
+                const canvas = document.createElement('canvas');
+                canvas.width = previewImg.naturalWidth;
+                canvas.height = previewImg.naturalHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(previewImg, 0, 0);
+                const base64Data = canvas.toDataURL('image/png').split(',')[1];
 
-        const runAnalysis = async () => {
-            showUI('loading');
-            errorBox.classList.add('hidden');
+                try {
+                    const data = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{
+                                parts: [
+                                    { text: "Act as a Lead Minecraft Engine Developer. Identify the SINGLE, ABSOLUTE, OFFICIAL technical hex code for this texture/chat color (MapColor, MaterialColor, or ChatFormatting constants). Ignore lighting/noise. Return JSON: { \"hex\": \"#RRGGBB\", \"material_name\": \"Official Name\", \"reasoning\": \"Exact constant (e.g. MapColor.COLOR_RED).\" }. Temperature 0 for truth." },
+                                    { inlineData: { mimeType: "image/png", data: base64Data } }
+                                ]
+                            }],
+                            generationConfig: {
+                                responseMimeType: "application/json",
+                                temperature: 0
+                            }
+                        })
+                    });
 
-            const canvas = document.createElement('canvas');
-            canvas.width = previewImg.naturalWidth;
-            canvas.height = previewImg.naturalHeight;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(previewImg, 0, 0);
-            const base64Data = canvas.toDataURL('image/png').split(',')[1];
+                    if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
+                        const result = JSON.parse(data.candidates[0].content.parts[0].text);
+                        const technicalValue = `FF${result.hex.replace('#', '').toUpperCase()}`;
 
-            try {
-                const data = await fetchWithRetry(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [{
-                            parts: [
-                                { text: "Act as a Lead Minecraft Engine Developer. Identify the SINGLE, ABSOLUTE, OFFICIAL technical hex code for this texture/chat color (MapColor, MaterialColor, or ChatFormatting constants). Ignore lighting/noise. Return JSON: { \"hex\": \"#RRGGBB\", \"material_name\": \"Official Name\", \"reasoning\": \"Exact constant (e.g. MapColor.COLOR_RED).\" }. Temperature 0 for truth." },
-                                { inlineData: { mimeType: "image/png", data: base64Data } }
-                            ]
-                        }],
-                        generationConfig: {
-                            responseMimeType: "application/json",
-                            temperature: 0
-                        }
-                    })
-                });
+                        materialName.textContent = result.material_name;
+                        sourceHex.textContent = result.hex;
+                        finalHex.textContent = technicalValue;
+                        colorPreview.style.backgroundColor = result.hex;
+                        reasoningText.textContent = result.reasoning;
 
-                if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
-                    const result = JSON.parse(data.candidates[0].content.parts[0].text);
-                    const technicalValue = `FF${result.hex.replace('#', '').toUpperCase()}`;
+                        currentAnalysis = technicalValue;
+                        showUI('result');
+                    } else { throw new Error("Empty candidate response"); }
+                } catch (err) {
+                    console.error("Extraction Error:", err);
+                    showUI('empty');
+                    errorBox.classList.remove('hidden');
+                }
+            };
 
-                    materialName.textContent = result.material_name;
-                    sourceHex.textContent = result.hex;
-                    finalHex.textContent = technicalValue;
-                    colorPreview.style.backgroundColor = result.hex;
-                    reasoningText.textContent = result.reasoning;
+            fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+            dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dragOverlay.classList.remove('hidden'); });
+            dropZone.addEventListener('dragleave', () => dragOverlay.classList.add('hidden'));
+            dropZone.addEventListener('drop', (e) => { e.preventDefault(); dragOverlay.classList.add('hidden'); handleFile(e.dataTransfer.files[0]); });
 
-                    currentAnalysis = technicalValue;
-                    showUI('result');
-                } else { throw new Error("Empty candidate response"); }
-            } catch (err) {
-                console.error("Extraction Error:", err);
-                showUI('empty');
-                errorBox.classList.remove('hidden');
-            }
-        };
+            copyCard.addEventListener('click', () => {
+                if (currentAnalysis) {
+                    const el = document.createElement('textarea');
+                    el.value = currentAnalysis;
+                    document.body.appendChild(el);
+                    el.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(el);
+                    copiedOverlay.classList.remove('hidden');
+                    setTimeout(() => copiedOverlay.classList.add('hidden'), 2000);
+                }
+            });
 
-        fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
-        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dragOverlay.classList.remove('hidden'); });
-        dropZone.addEventListener('dragleave', () => dragOverlay.classList.add('hidden'));
-        dropZone.addEventListener('drop', (e) => { e.preventDefault(); dragOverlay.classList.add('hidden'); handleFile(e.dataTransfer.files[0]); });
-
-        copyCard.addEventListener('click', () => {
-            if (currentAnalysis) {
-                const el = document.createElement('textarea');
-                el.value = currentAnalysis;
-                document.body.appendChild(el);
-                el.select();
-                document.execCommand('copy');
-                document.body.removeChild(el);
-                copiedOverlay.classList.remove('hidden');
-                setTimeout(() => copiedOverlay.classList.add('hidden'), 2000);
-            }
-        });
-
-        window.addEventListener('load', () => lucide.createIcons());
+            window.addEventListener('load', () => lucide.createIcons());
     </script>
 </body>
 
